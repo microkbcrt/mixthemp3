@@ -1,0 +1,92 @@
+name: Merge Audio and Create Release
+
+on:
+  workflow_dispatch:  # 允许手动触发
+    inputs:
+      output_name:
+        description: '输出文件名'
+        required: false
+        default: 'merged_audio.ogg'
+      bitrate:
+        description: '输出音频比特率'
+        required: false
+        default: '320k'
+
+jobs:
+  merge-and-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: 设置 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    
+    - name: 安装系统依赖
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+    
+    - name: 安装 Python 依赖
+      run: |
+        python -m pip install --upgrade pip
+    
+    - name: 运行音频合并脚本
+      env:
+        OUTPUT_NAME: ${{ github.event.inputs.output_name || 'merged_audio.ogg' }}
+        BITRATE: ${{ github.event.inputs.bitrate || '320k' }}
+      run: |
+        python merge_audio.py --output "$OUTPUT_NAME" --bitrate "$BITRATE"
+    
+    - name: 创建 Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          merged_audio.ogg
+          ${{ github.event.inputs.output_name || 'merged_audio.ogg' }}
+        generate_release_notes: true
+        body: |
+          自动生成的音频合并版本
+          
+          此版本包含所有音频文件合并后的单一OGG文件。
+          
+          **文件信息:**
+          - 格式: OGG (Vorbis)
+          - 比特率: ${{ github.event.inputs.bitrate || '320k' }}
+          - 包含所有仓库中的mp3, flac, ogg, wav, m4a, aac, wma文件
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: 上传合并文件到工作流制品
+      if: failure() || success()  # 无论成功失败都上传
+      uses: actions/upload-artifact@v4
+      with:
+        name: merged-audio
+        path: |
+          merged_audio.ogg
+          ${{ github.event.inputs.output_name || 'merged_audio.ogg' }}
+        retention-days: 7
+    
+    - name: 生成工作流摘要
+      if: always()
+      run: |
+        echo "## 音频合并结果" >> $GITHUB_STEP_SUMMARY
+        if [ -f "merged_audio.ogg" ]; then
+          echo "✅ 音频文件合并成功" >> $GITHUB_STEP_SUMMARY
+          echo "**文件:** merged_audio.ogg" >> $GITHUB_STEP_SUMMARY
+          echo "**比特率:** ${{ github.event.inputs.bitrate || '320k' }}" >> $GITHUB_STEP_SUMMARY
+          
+          # 获取文件大小
+          FILESIZE=$(stat -c%s "merged_audio.ogg" 2>/dev/null || stat -f%z "merged_audio.ogg")
+          FILESIZE_MB=$(echo "scale=2; $FILESIZE / (1024 * 1024)" | bc)
+          echo "**大小:** ${FILESIZE_MB} MB" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ 音频文件合并失败" >> $GITHUB_STEP_SUMMARY
+          echo "请检查日志以获取更多信息。" >> $GITHUB_STEP_SUMMARY
+        fi
